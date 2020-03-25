@@ -3,13 +3,15 @@ module Game where
 import qualified Data.Map as M
 import qualified Data.Vector as V
 
+import Data.Foldable (foldl)
+
 import Text.Printf
 
 type Board = M.Map Square Piece
 
 newtype Square = Square {unSquare :: Int} deriving(Show, Ord, Eq)
 
-data Piece = X | O deriving(Show)
+data Piece = X | O deriving(Show, Eq)
 
 data GameMode = Opening | Midgame | Endgame deriving(Show)
 
@@ -22,36 +24,89 @@ emptyState = GameState X Opening emptyBoard
 
 emptyBoard = M.empty
 
-gameLoop :: GameState -> IO()
-gameLoop game = do
-  renderGame game
-  putStrLn ""
-  let turn = gameTurn game
-  move <- askNextOpeningMove turn
-  let newBoard = placePiece move turn $ gameBoard game
-  gameLoop $ GameState (changeTurn turn) (gameMode game) newBoard
-
-changeTurn X = O
-changeTurn O = X
-
-placePiece = M.insert 
+-- Opening game 
 
 askNextOpeningMove :: Piece -> IO(Square)
 askNextOpeningMove turn = do
   putStrLn $ "Turn of " ++ show turn
   putStr "Where to place the next piece: "
   input <- getLine
-  case parseSquare input of
-    Just mv -> return mv
-    Nothing -> putStrLn "Invalid command. Try again" >>
+  case parseCoordinate input of
+    Right mv -> return mv
+    Left err -> putStrLn err >>
                askNextOpeningMove turn
+
+openingLoop :: (Int,Int) -> GameState -> IO()
+openingLoop left game = do
+  renderGame game
+  putStrLn ""
+  let turn = gameTurn game
+  move <- askNextOpeningMove turn
   
+  let newBoard = placePiece move turn $ gameBoard game
+      newGameState = GameState (changeTurn turn) (gameMode game) newBoard
+      newleft = decrPiece turn left
+      
+  if newleft == (0,0)
+    then midgameLoop newGameState
+    else openingLoop newleft $ newGameState
 
-parseSquare str = Just $ Square $ read str
+  where
+    decrPiece pcs (xleft, oleft) = if pcs == X
+                                   then (xleft-1, oleft)
+                                   else (xleft, oleft-1)
 
+-- midgame
+
+midgameLoop :: GameState -> IO()
+midgameLoop game = do
+  renderGame game
+  putStrLn ""
+  let turn = gameTurn game
+  move <- askNextMidgameMove turn
+  print move
+
+askNextMidgameMove :: Piece -> IO(Square, Square)
+askNextMidgameMove turn = do
+  putStrLn $ "Turn of " ++ show turn
+  putStr "Which piece to move and where: "
+  input <- getLine
+  case parseMidgameMove input of
+    Left error -> putStrLn error >> askNextMidgameMove turn
+    Right mov -> return mov
+
+parseMidgameMove :: String -> Either String (Square, Square)
+parseMidgameMove input = case words input of
+                           [from, to] -> do
+                             c1 <- parseCoordinate from
+                             c2 <- parseCoordinate to
+                             return (c1, c2)
+
+changeTurn X = O
+changeTurn O = X
+
+placePiece = M.insert 
+
+  
 renderGame :: GameState -> IO()
 renderGame game = do
   putStrLn $ renderBoard $ gameBoard game
+
+parseCoordinate :: String -> Either String Square
+parseCoordinate x = case M.lookup x parseMap of
+                      Just s -> Right s
+                      Nothing -> Left $ "Input " ++ x ++ " is not a valid coordinate"
+
+coordinates = ["a1","d1","g1",
+               "b2","d2","f2",
+               "c3","d3","e3",
+               "a4","b4","c4","e4","f4","g4",
+               "c5","d5","e5",
+               "b6","d6","f6",
+               "a7","d7","g7"]
+
+parseMap :: M.Map String Square
+parseMap = M.fromList $ zip coordinates (map Square [0..])
 
 a1 = Square 0
 d1 = Square 1
@@ -104,6 +159,15 @@ renderBoard brd = fst $ foldl foldfun ("", 0) boardTemplate
 
 getPiece = M.lookup
 
+countPieces :: Piece -> Board -> Int
+countPieces psc = foldl (\acc x -> if x == psc then acc+1 else acc) 0
+
+countXs :: Board -> Int
+countXs = countPieces X
+
+countOs :: Board -> Int
+countOs = countPieces O
+
 legalMoves :: M.Map Square [Square]
 legalMoves =
   M.fromList [(a1, [d1, a4]),
@@ -141,6 +205,8 @@ isEmpty :: Board -> Square -> Bool
 isEmpty brd sqr = case M.lookup sqr brd of
                     Just _ -> False
                     Nothing -> True
+
+        
 
 pieceAsChar :: Piece -> Char
 pieceAsChar X = 'X'
