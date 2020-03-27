@@ -7,13 +7,41 @@ import Data.Foldable (foldl)
 
 import Text.Printf
 
+-- Board is a map indexed by Square coordinate 
 type Board = M.Map Square Piece
 
+-- Square is an Integer
 newtype Square = Square {unSquare :: Int} deriving(Show, Ord, Eq)
 
+-- The coordinates are calculated from top row, left to right
+
+-- 0-----------1-----------2
+-- |           |           |
+-- |   3-------4-------5   |
+-- |   |       |       |   |
+-- |   |   6---7---8   |   |
+-- |   |   |       |   |   |
+-- 9--10--11      12--13--14
+-- |   |   |       |   |   |
+-- |   |   15--16--17  |   |
+-- |   |       |       |   |
+-- |   18------19-----20   |
+-- |           |           |
+-- 21----------22---------23
+
+
+-- Two kinds of pieces
 data Piece = X | O deriving(Show, Eq)
 
-data GameMode = Opening | Midgame | Endgame deriving(Show)
+-- Morris has three game modes
+-- 1. opening where pieces are placed on the board
+-- 2. midgame where pieces are moved
+-- 3. endgame where one or both of the players can hop around the board
+data GameMode = Opening
+              | Midgame
+              | Endgame
+              | Winner Piece deriving(Show)
+
 
 data GameState = GameState { gameTurn :: Piece,
                              gameMode :: GameMode,
@@ -24,90 +52,14 @@ emptyState = GameState X Opening emptyBoard
 
 emptyBoard = M.empty
 
--- Opening game 
-
-askNextOpeningMove :: Piece -> IO(Square)
-askNextOpeningMove turn = do
-  putStrLn $ "Turn of " ++ show turn
-  putStr "Where to place the next piece: "
-  input <- getLine
-  case parseCoordinate input of
-    Right mv -> return mv
-    Left err -> putStrLn err >>
-               askNextOpeningMove turn
-
-openingLoop :: (Int,Int) -> GameState -> IO()
-openingLoop left game = do
-  renderGame game
-  putStrLn ""
-  let turn = gameTurn game
-  move <- askNextOpeningMove turn
-  
-  let newBoard = placePiece move turn $ gameBoard game
-      newGameState = GameState (changeTurn turn) (gameMode game) newBoard
-      newleft = decrPiece turn left
-      
-  if newleft == (0,0)
-    then midgameLoop newGameState
-    else openingLoop newleft $ newGameState
-
-  where
-    decrPiece pcs (xleft, oleft) = if pcs == X
-                                   then (xleft-1, oleft)
-                                   else (xleft, oleft-1)
-
--- midgame
-
-midgameLoop :: GameState -> IO()
-midgameLoop game = do
-  renderGame game
-  putStrLn ""
-  let turn = gameTurn game
-  move <- askNextMidgameMove turn
-  print move
-
-askNextMidgameMove :: Piece -> IO(Square, Square)
-askNextMidgameMove turn = do
-  putStrLn $ "Turn of " ++ show turn
-  putStr "Which piece to move and where: "
-  input <- getLine
-  case parseMidgameMove input of
-    Left error -> putStrLn error >> askNextMidgameMove turn
-    Right mov -> return mov
-
-parseMidgameMove :: String -> Either String (Square, Square)
-parseMidgameMove input = case words input of
-                           [from, to] -> do
-                             c1 <- parseCoordinate from
-                             c2 <- parseCoordinate to
-                             return (c1, c2)
-
 changeTurn X = O
 changeTurn O = X
 
-placePiece = M.insert 
+placePiece :: Square -> Piece -> Board -> Board
+placePiece = M.insert
 
-  
-renderGame :: GameState -> IO()
-renderGame game = do
-  putStrLn $ renderBoard $ gameBoard game
-
-parseCoordinate :: String -> Either String Square
-parseCoordinate x = case M.lookup x parseMap of
-                      Just s -> Right s
-                      Nothing -> Left $ "Input " ++ x ++ " is not a valid coordinate"
-
-coordinates = ["a1","d1","g1",
-               "b2","d2","f2",
-               "c3","d3","e3",
-               "a4","b4","c4","e4","f4","g4",
-               "c5","d5","e5",
-               "b6","d6","f6",
-               "a7","d7","g7"]
-
-parseMap :: M.Map String Square
-parseMap = M.fromList $ zip coordinates (map Square [0..])
-
+-- Some helper definitions
+-- TODO: remove these and write the move graph using ints
 a1 = Square 0
 d1 = Square 1
 g1 = Square 2
@@ -133,30 +85,7 @@ a7 = Square 21
 d7 = Square 22
 g7 = Square 23
 
-boardTemplate = "   a   b   c   d   e   f   g\n" ++ 
-                "                            \n" ++
-                "1  +-----------+-----------+\n" ++
-                "   |           |           |\n" ++
-                "2  |   +-------+-------+   |\n" ++
-                "   |   |       |       |   |\n" ++
-                "3  |   |   +---+---+   |   |\n" ++
-                "   |   |   |       |   |   |\n" ++
-                "4  +---+---+       +---+---+\n" ++
-                "   |   |   |       |   |   |\n" ++
-                "5  |   |   +---+---+   |   |\n" ++
-                "   |   |       |       |   |\n" ++
-                "6  |   +-------+-------+   |\n" ++
-                "   |           |           |\n" ++
-                "7  +-----------+-----------+\n"
-
-renderBoard brd = fst $ foldl foldfun ("", 0) boardTemplate
-  where
-    foldfun (str, count) '+' = (str ++ [renderPiece count], count+1)
-    foldfun (str, count) x  = (str ++ [x], count)
-    renderPiece ind = case getPiece (Square ind) brd of
-                        Just p -> pieceAsChar p
-                        Nothing -> '+'
-
+getPiece :: Square -> Board -> Maybe Piece
 getPiece = M.lookup
 
 countPieces :: Piece -> Board -> Int
@@ -168,6 +97,7 @@ countXs = countPieces X
 countOs :: Board -> Int
 countOs = countPieces O
 
+-- Legal moves graph in normal mode
 legalMoves :: M.Map Square [Square]
 legalMoves =
   M.fromList [(a1, [d1, a4]),
@@ -194,24 +124,22 @@ legalMoves =
               (a7, [a4, d7]),
               (d7, [a7, d6, g7]),
               (g7, [g4, d7])]
-          
+
+-- Check if a move is legal in normal mode
+-- doesn't check if board is already occupied
 isLegalNormalMode :: Square -> Square -> Bool
 isLegalNormalMode frm to = case M.lookup frm legalMoves of
                              Just lst -> elem to lst
                              -- Should never happen
                              Nothing  -> error "Square doesn't exist!"
 
+-- Check if a square is empty
 isEmpty :: Board -> Square -> Bool
 isEmpty brd sqr = case M.lookup sqr brd of
                     Just _ -> False
                     Nothing -> True
 
+
         
 
-pieceAsChar :: Piece -> Char
-pieceAsChar X = 'X'
-pieceAsChar O = 'O'
-
-testBoard :: M.Map Square Piece
-testBoard = M.fromList $ map (\(x,y) -> (Square x, y)) [(1,X), (5,O), (10,X), (12, X), (18, O)]
 
