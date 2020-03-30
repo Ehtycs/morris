@@ -5,49 +5,55 @@ import System.Exit (exitSuccess)
 
 import Game
 
-data Input = Quit
-           | Place Square
-           | Move Square Square
-           | Remove Square
+data Command = Quit
+             | Single Square
+             | Pair Square Square
+             | Remove Square
 
--- Ask a next opening move, repeat until a succesful parse is obtained
+printTurn turn = putStrLn $ "Turn of " ++ show turn
 
-askNextOpeningMove :: Piece -> IO(Input)
-askNextOpeningMove turn = do
-  putStrLn $ "Turn of " ++ show turn
-  putStr "Where to place the next piece: "
-  input <- getLine
-  if input == "q"
-    then return Quit
-    else case parseCoordinate input of
-           Right mv -> return $ Place mv
-           Left err -> putStrLn err >>
-                       askNextOpeningMove turn
-
+-- Run a single loop of opening game
 openingLoop :: (Int,Int) -> GameState -> IO()
 openingLoop left game = do
+  printSeparator
   renderGame game
-  putStrLn ""
   let turn = gameTurn game
-  input <- askNextOpeningMove turn
+  printTurn turn
+  putStr "Where to place the next piece: "
+  input <- getLine
 
-  case input of
-    
-    Quit -> confirmQuit $ openingLoop left game
+  react (parseInput input) $ \cmd -> do
+    case cmd of 
+      Quit -> confirmQuit $ openingLoop left game
 
-    Place sq -> do  
-      let newBoard = placePiece sq turn $ gameBoard game
-          newGameState = GameState (changeTurn turn) (gameMode game) newBoard
-          newleft = decrPiece turn left
-      
-      if newleft == (0,0)
-        then midgameLoop newGameState
-        else openingLoop newleft $ newGameState
+      -- Place a piece expects a single coordinate as input
+      Single sq -> do
+
+        -- makeOpeningMove checks that the move is valid
+        case makeOpeningMove turn sq $ gameBoad game of
+          Left err -> putStrLn err >> openingLoop left game
+          
+          Right newBoard -> do
+            let newGameState = GameState (changeTurn turn) newBoard
+                newleft = decrPiece turn left
+            -- If there are still pieces left to be placed, continue opening
+            -- otherwise change to midgame
+            if newleft == (0,0)
+              then midgameLoop newGameState
+              else openingLoop newleft $ newGameState
+
+      _ -> putStrLn "Invalid command during opening game" >>
+           openingLoop left game
 
   where
+    -- For an invalid command, keep the same state and rerun this function
+    react = runCommand $ \err -> putStrLn err >> openingLoop left game
+
     decrPiece pcs (xleft, oleft) = if pcs == X
                                    then (xleft-1, oleft)
                                    else (xleft, oleft-1)
+
+                                        
 confirmQuit :: IO() -> IO()
 confirmQuit backTo = do
   putStr "Are you sure you want to quit? [y/N]: "
@@ -56,42 +62,58 @@ confirmQuit backTo = do
     "y" -> exitSuccess
     _   -> backTo
 
+runCommand :: (String -> IO())
+           -> Either String Command
+           -> (Command -> IO())
+           -> IO()           
+runCommand onerror cmd handler = do
+  case cmd of
+    Left err -> onerror err
+    Right command -> handler command
+    
+parseInput :: String -> Either String Command
+parseInput inp = case words inp of
+                   ["q"] -> Right Quit
+
+                   [x] ->
+                     Single <$> parseCoordinate x                     
+
+                   [from, to] ->
+                     Pair <$> parseCoordinate from <*> parseCoordinate to
+
+                   _ -> Left "Command not understood"
+
+
+printError err = putStrLn $ "Error! " ++ err
+printSeparator = putStrLn "" >>
+                 putStrLn "" >>
+                 putStrLn "* * * * * * * * * * * * * * * * * * * *"
+
 -- midgame
 
 midgameLoop :: GameState -> IO()
 midgameLoop game = do
+  printSeparator
   renderGame game
-  putStrLn ""
   let turn = gameTurn game
-  move <- askNextMidgameMove turn
-  case move of
-    Quit -> confirmQuit $ midgameLoop game
-    Move from to -> do
-      print "asd"
-
-
-askNextMidgameMove :: Piece -> IO(Input)
-askNextMidgameMove turn = do
-  putStrLn $ "Turn of " ++ show turn
+  printTurn turn
   putStr "Which piece to move and where: "
   input <- getLine
-  if input == "q"
-    then return Quit
-    else  case parseMidgameMove input of
-            Left error -> putStrLn error >> askNextMidgameMove turn
-            Right (from, to) -> return $ Move from to
 
-parseMidgameMove :: String -> Either String (Square, Square)
-parseMidgameMove input = case words input of
-                           [from, to] -> do
-                             c1 <- parseCoordinate from
-                             c2 <- parseCoordinate to
-                             return (c1, c2)
-                           _ -> Left "Please give coordinates separated by space"
+  react (parseInput input) $ \cmd -> do
+    case cmd of
+      Quit -> confirmQuit $ midgameLoop game
+
+      Pair from to -> do
+        putStrLn $ "moving from " ++ show from ++ " to " ++ show to 
+
+  where
+    react = runCommand $ \err -> printError err >> midgameLoop game
 
 renderGame :: GameState -> IO()
 renderGame game = do
   putStrLn $ renderBoard $ gameBoard game
+  putStrLn ""
 
 parseCoordinate :: String -> Either String Square
 parseCoordinate x = case M.lookup x parseMap of
@@ -132,7 +154,7 @@ renderBoard brd = fst $ foldl foldfun ("", 0) boardTemplate
   where
     foldfun (str, count) '+' = (str ++ [renderPiece count], count+1)
     foldfun (str, count) x  = (str ++ [x], count)
-    renderPiece ind = case getPiece (Square ind) brd of
+    renderPiece ind = case lookupPiece (Square ind) brd of
                         Just p -> pieceAsChar p
                         Nothing -> '+'
 

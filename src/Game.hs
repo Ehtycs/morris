@@ -58,6 +58,9 @@ changeTurn O = X
 placePiece :: Square -> Piece -> Board -> Board
 placePiece = M.insert
 
+removePiece :: Square -> Board -> Board
+removePiece = M.delete
+
 -- Some helper definitions
 -- TODO: remove these and write the move graph using ints
 a1 = Square 0
@@ -85,8 +88,8 @@ a7 = Square 21
 d7 = Square 22
 g7 = Square 23
 
-getPiece :: Square -> Board -> Maybe Piece
-getPiece = M.lookup
+lookupPiece :: Square -> Board -> Maybe Piece
+lookupPiece = M.lookup
 
 countPieces :: Piece -> Board -> Int
 countPieces psc = foldl (\acc x -> if x == psc then acc+1 else acc) 0
@@ -139,7 +142,21 @@ isEmpty brd sqr = case M.lookup sqr brd of
                     Just _ -> False
                     Nothing -> True
 
+makeOpeningMove :: Piece -> Square -> Board -> Either String Board
+makeOpeningMove p sq brd = case isEmpty brd sq of
+                             True -> Right $ placePiece sq p brd
+                             False -> Left "Square is not empty" 
 
-        
-
+makeMidgameMove :: Piece -> Square -> Square -> Board -> Either String Board
+makeMidgameMove turn from to brd
+  | from == to = Left $ "Can't move from square to itself..."
+  | otherwise =
+      case lookupPiece from brd of
+        Nothing -> Left $ "Square " ++ show from ++ " is empty!"
+    
+        Just pc ->
+          -- Ensure that we are moving our own piece
+          if pc /= turn
+          then Left $ "Can't move opponent's piece!"
+          else Right $ placePiece to turn $ removePiece from brd
 
